@@ -10,7 +10,7 @@ st.title("社群分析模擬器")
 st.write("請輸入一句話，我會分析其語氣（正向／負向／中性）並說明理由。")
 
 # 使用者輸入句子
-user_input = st.text_input("請輸入你的句子：")
+user_input = st.text_input("輸入你的句子：")
 
 if user_input:
     with st.spinner("分析中...請稍候"):
