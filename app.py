@@ -2,7 +2,8 @@
 import os
 from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.getenv("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
+"))
 
 # 顯示標題與說明
 st.title("社群分析模擬器")
