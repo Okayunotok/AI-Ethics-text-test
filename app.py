@@ -2,16 +2,16 @@
 import streamlit as st
 from openai import OpenAI
 
-# ✅ 使用新版 openai 套件的初始化方式
+
 client = OpenAI(api_key="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")
 
 
-# 顯示標題與說明
+
 st.title("社群模擬器（OpenAI v1+）")
 st.write("請輸入一句話，我會分析")
 
-# 使用者輸入句子
-user_input = st.text_input("請輸入你的句子：")
+
+user_input = st.text_input("輸入你的句子：")
 
 if user_input:
     with st.spinner("分析中...請稍候"):
