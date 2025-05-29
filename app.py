@@ -1,101 +1,83 @@
+# 語馴塔：The Language Conditioning Panopticon
 import streamlit as st
-import openai
+from difflib import SequenceMatcher
+from openai import OpenAI
 import requests
-import difflib
-import os
+import json
 
-# UI 設定
-st.set_page_config(page_title="語馴塔：The Language Conditioning Panopticon")
-st.title("🌀 語馴塔：The Language Conditioning Panopticon")
+# 初始化 OpenAI 客戶端（新版介面）
+openai_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# 模型選擇
-model_option = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義模型"])
-user_input = st.text_area("輸入要檢測的句子")
+# 計算修改百分比
+def calculate_diff_ratio(original, revised):
+    matcher = SequenceMatcher(None, original, revised)
+    ratio = matcher.ratio()
+    return round((1 - ratio) * 100, 2)
 
-custom_api_url = ""
-if model_option == "自定義模型":
-    custom_api_url = st.text_input("輸入自定義 API URL")
-
-run_button = st.button("執行判斷與改寫")
-
-def call_openai_api(prompt):
-    client = openai.OpenAI(
-        api_key=st.secrets["OPENAI_API_KEY"],
-        organization=st.secrets["OPENAI_ORG_ID"]
-    )
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-def call_claude_api(prompt):
-    claude_api_key = st.secrets["CLAUDE_API_KEY"]
+# Claude 改寫邏輯
+def call_claude(prompt, claude_api_key):
+    url = "https://api.anthropic.com/v1/messages"
     headers = {
         "x-api-key": claude_api_key,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json"
     }
-    body = {
-        "model": "claude-3-haiku-20240307",
+    data = {
+        "model": "claude-3-opus-20240229",
         "max_tokens": 1024,
-        "temperature": 0,
         "messages": [
             {"role": "user", "content": prompt}
         ]
     }
-    response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
-    return response.json()["content"][0]["text"].strip()
+    response = requests.post(url, headers=headers, data=json.dumps(data))
+    result = response.json()
+    return result["content"][0]["text"] if "content" in result else ""
 
-def call_custom_model(api_url, payload):
-    response = requests.post(api_url, json=payload)
-    return response.json()["result"].strip()
+# Streamlit 介面設計
+st.title("🌀 語馴塔：The Language Conditioning Panopticon")
+model_option = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義模型"])
 
-def calculate_change_ratio(original, revised):
-    original_words = original.split()
-    revised_words = revised.split()
-    diff = difflib.ndiff(original_words, revised_words)
-    changes = [d for d in diff if d.startswith('+ ') or d.startswith('- ')]
-    change_ratio = len(changes) / max(len(original_words), 1)
-    return round(change_ratio * 100, 2)
+custom_api_url = ""
+if model_option == "自定義模型":
+    custom_api_url = st.text_input("請輸入自定義模型 API URL")
 
-def highlight_diff(original, revised):
-    differ = difflib.Differ()
-    diff = list(differ.compare(original, revised))
-    result = ""
-    for word in diff:
-        if word.startswith("+ "):
-            result += f'<span style="background-color:#ffdce0">{word[2:]}</span> '
-        elif word.startswith("- "):
-            result += f'<span style="background-color:#e6f7ff">{word[2:]}</span> '
-        elif word.startswith("  "):
-            result += f'{word[2:]} '
-    return result
+user_input = st.text_area("輸入要檢測的句子")
+if st.button("執行判斷與改寫"):
+    try:
+        with st.spinner("分析中..."):
+            # Claude Prompt
+            claude_prompt = (
+                "請你作為內容審查模型，只針對以下句子中可能違反社群規範或敏感字眼進行改寫，"
+                "使其符合平台審查標準，但保留原始語意和語法結構。若句子無需修改，請原樣回傳。"
+                "禁止添加任何說明文字或額外建議，只回傳改寫後的句子內容。\n句子：" + user_input
+            )
 
-if run_button and user_input:
-    with st.spinner("處理中..."):
-        try:
             if model_option == "OpenAI":
-                prompt = f"請你作為內容審查模型，只針對以下句子中可能違反規範或社群敏感的字眼，進行改寫使其符合平台審查標準，但保留句子原始語意和結構，只回傳改寫後的句子。\n\n句子：{user_input}"
-                result = call_openai_api(prompt)
+                response = openai_client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "你是內容審查助手，請改寫違規用語但保留語意。"},
+                        {"role": "user", "content": user_input}
+                    ]
+                )
+                revised = response.choices[0].message.content.strip()
+
             elif model_option == "Anthropic Claude":
-                prompt = f"請你作為內容審查模型，只針對以下句子中可能違反規範或社群敏感的字眼，進行改寫使其符合平台審查標準，但保留句子原始語意和結構，只回傳改寫後的句子。\n\n句子：{user_input}"
-                result = call_claude_api(prompt)
-            else:
-                result = call_custom_model(custom_api_url, {"text": user_input})
+                revised = call_claude(claude_prompt, st.secrets["CLAUDE_API_KEY"])
 
-            change_percent = calculate_change_ratio(user_input, result)
-            diff_html = highlight_diff(user_input, result)
+            elif model_option == "自定義模型":
+                res = requests.post(custom_api_url, json={"text": user_input})
+                revised = res.json().get("revised", "")
 
-            st.markdown("""
-                ### 🛠️ 改寫結果
-                **改寫後句子：**
-            """)
-            st.markdown(diff_html, unsafe_allow_html=True)
-            st.markdown(f"**修改百分比：** {change_percent}%")
+            # 比對差異與顯示
+            diff_percent = calculate_diff_ratio(user_input, revised)
+            st.subheader("🛠️ 改寫結果")
+            st.markdown(f"**改寫後句子：** {revised}")
+            st.markdown(f"**修改百分比：** {diff_percent}%")
 
-        except Exception as e:
-            st.error(f"錯誤：{str(e)}")
+    except Exception as e:
+        st.error(f"錯誤：\n{e}")
+
 
 
 
