@@ -48,7 +48,8 @@ if st.button("執行判斷與改寫") and input_text.strip():
                 max_tokens=300,
                 temperature=0.7,
                 messages=[
-                    {"role": "user", "content": f"請將這句話改寫為更符合社群審查規範的版本，不需產出任何說明，僅回傳改寫後句子：{input_text}"}
+                    {"role": "user", "content": f"請你作為內容審查模型，只針對以下句子中可能違反規範或社群敏感的字眼，進行改寫，使其符合平台審查標準，但保留句子原始語意和語
+                     句結構，只回傳改寫後句子。：{input_text}"}
                 ]
             )
             modified_text = response.content[0].text.strip()
@@ -70,6 +71,7 @@ if st.button("執行判斷與改寫") and input_text.strip():
 
     except Exception as e:
         st.error(f"錯誤：{str(e)}")
+
 
 
 
