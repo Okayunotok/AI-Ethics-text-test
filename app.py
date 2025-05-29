@@ -1,82 +1,108 @@
-# 語馴塔：The Language Conditioning Panopticon
 import streamlit as st
-from difflib import SequenceMatcher
-from openai import OpenAI
+import difflib
+import openai
 import requests
-import json
 
-# 初始化 OpenAI 客戶端（新版介面）
-openai_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+st.set_page_config(page_title="語馴塔", layout="centered")
+st.title("語馴塔：The Language Conditioning Panopticon")
 
-# 計算修改百分比
-def calculate_diff_ratio(original, revised):
-    matcher = SequenceMatcher(None, original, revised)
-    ratio = matcher.ratio()
-    return round((1 - ratio) * 100, 2)
+# 模型選擇
+model_option = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義"])
 
-# Claude 改寫邏輯
-def call_claude(prompt, claude_api_key):
-    url = "https://api.anthropic.com/v1/messages"
-    headers = {
-        "x-api-key": claude_api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-    }
-    data = {
-        "model": "claude-3-opus-20240229",
-        "max_tokens": 1024,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-    response = requests.post(url, headers=headers, data=json.dumps(data))
-    result = response.json()
-    return result["content"][0]["text"] if "content" in result else ""
-
-# Streamlit 介面設計
-st.title("🌀 語馴塔：The Language Conditioning Panopticon")
-model_option = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義模型"])
-
+# 自定義 API URL（僅當選自定義時出現）
 custom_api_url = ""
-if model_option == "自定義模型":
-    custom_api_url = st.text_input("請輸入自定義模型 API URL")
+if model_option == "自定義":
+    custom_api_url = st.text_input("輸入自定義模型 API URL")
 
-user_input = st.text_area("輸入要檢測的句子")
-if st.button("執行判斷與改寫"):
+# 使用者輸入句子
+user_input = st.text_area("輸入要檢測的句子", height=150)
+
+# 高亮差異函式
+def highlight_diff(original: str, modified: str) -> str:
+    diff = difflib.ndiff(original, modified)
+    result = ""
+    open_tag = False
+    for d in diff:
+        if d.startswith("- "):
+            continue  # 跳過刪除的部分
+        elif d.startswith("+ "):
+            if not open_tag:
+                result += "<mark>"
+                open_tag = True
+            result += d[2:]
+        elif d.startswith("  "):
+            if open_tag:
+                result += "</mark>"
+                open_tag = False
+            result += d[2:]
+    if open_tag:
+        result += "</mark>"
+    return result
+
+# 改寫邏輯
+def rewrite_text(text: str, model: str, custom_url: str = "") -> str:
+    if model == "OpenAI":
+        openai.api_key = st.secrets["OPENAI_API_KEY"]
+        openai.organization = st.secrets["OPENAI_ORG_ID"]
+        openai.project = st.secrets["OPENAI_PROJECT_ID"]
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "請你作為內容審查模型，只針對以下句子中可能違反社群規範或敏感字眼進行改寫，使其符合平台審查標準，但保留原始語意和語法結構。若句子無需修改，請原樣回傳。禁止添加任何說明文字或額外建議，只回傳改寫後的句子內容。"
+                },
+                {"role": "user", "content": text}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+
+    elif model == "Anthropic Claude":
+        import anthropic
+        client = anthropic.Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
+        response = client.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=300,
+            temperature=0,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "請你作為內容審查模型，只針對以下句子中可能違反社群規範或敏感字眼進行改寫，使其符合平台審查標準，但保留原始語意和語法結構。若句子無需修改，請原樣回傳。禁止添加任何說明文字或額外建議，只回傳改寫後的句子內容。\n\n" + text
+                }
+            ]
+        )
+        return response.content[0].text.strip()
+
+    elif model == "自定義":
+        headers = {"Content-Type": "application/json"}
+        payload = {"input": text}
+        res = requests.post(custom_url, json=payload)
+        return res.json()["output"].strip()
+
+    else:
+        return "無效模型選擇"
+
+# 改寫差異與修改百分比顯示區域
+if st.button("執行判斷與改寫") and user_input:
     try:
-        with st.spinner("分析中..."):
-            # Claude Prompt
-            claude_prompt = (
-                "請你作為內容審查模型，只針對以下句子中可能違反社群規範或敏感字眼進行改寫，"
-                "使其符合平台審查標準，但保留原始語意和語法結構。若句子無需修改，請原樣回傳。"
-                "禁止添加任何說明文字或額外建議，只回傳改寫後的句子內容。\n句子：" + user_input
-            )
+        rewritten = rewrite_text(user_input, model_option, custom_api_url)
+        diff_html = highlight_diff(user_input, rewritten)
 
-            if model_option == "OpenAI":
-                response = openai_client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "你是內容審查助手，請改寫違規用語但保留語意。"},
-                        {"role": "user", "content": user_input}
-                    ]
-                )
-                revised = response.choices[0].message.content.strip()
+        # 計算改寫百分比
+        def compute_similarity_ratio(a, b):
+            return difflib.SequenceMatcher(None, a, b).ratio()
 
-            elif model_option == "Anthropic Claude":
-                revised = call_claude(claude_prompt, st.secrets["CLAUDE_API_KEY"])
+        ratio = compute_similarity_ratio(user_input, rewritten)
+        percentage = round((1 - ratio) * 100, 2)
 
-            elif model_option == "自定義模型":
-                res = requests.post(custom_api_url, json={"text": user_input})
-                revised = res.json().get("revised", "")
-
-            # 比對差異與顯示
-            diff_percent = calculate_diff_ratio(user_input, revised)
-            st.subheader("🛠️ 改寫結果")
-            st.markdown(f"**改寫後句子：** {revised}")
-            st.markdown(f"**修改百分比：** {diff_percent}%")
+        st.markdown("### 🛠️ 改寫結果")
+        st.markdown("**改寫後句子：**", unsafe_allow_html=True)
+        st.markdown(f"<p style='font-size: 18px;'>{diff_html}</p>", unsafe_allow_html=True)
+        st.markdown(f"**修改百分比：** {percentage}%", unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(f"錯誤：\n{e}")
+        st.error(f"錯誤：\n\n{str(e)}")
+
 
 
 
