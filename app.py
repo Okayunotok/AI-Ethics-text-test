@@ -1,70 +1,76 @@
-
 import streamlit as st
-import openai
+import difflib
+import os
+
+# OpenAI 新版套件
+from openai import OpenAI
+
+# Anthropic 套件
+import anthropic
 import requests
 
-st.set_page_config(page_title="語馴塔：The Language Conditioning Panopticon")
-
+st.set_page_config(page_title="語馴塔", layout="centered")
 st.title("語馴塔：The Language Conditioning Panopticon")
 
-# 模型選擇
-model_option = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義模型"])
+# 模型選單
+model_choice = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義模型"])
 
-# 自定義模型 API URL 輸入
+# 若選自定義模型則顯示額外輸入欄
 custom_api_url = ""
-if model_option == "自定義模型":
-    custom_api_url = st.text_input("輸入自定義 API URL")
+if model_choice == "自定義模型":
+    custom_api_url = st.text_input("請輸入自定義模型 API URL")
 
-# 輸入文字
-user_input = st.text_area("輸入要檢測的句子", height=150)
+# 輸入要檢測的句子
+input_text = st.text_area("輸入要檢測的句子")
 
-# 執行按鈕
-if st.button("執行判斷與改寫") and user_input.strip() != "":
-    with st.spinner("處理中..."):
+# 判斷與改寫按鈕
+if st.button("執行判斷與改寫") and input_text.strip():
 
-        try:
-            if model_option == "OpenAI":
-                openai.api_key = st.secrets["OPENAI_API_KEY"]
-                openai.organization = st.secrets["OPENAI_ORG_ID"]
-                openai_project = st.secrets["OPENAI_PROJECT_ID"]
+    try:
+        modified_text = ""
 
-                response = openai.ChatCompletion.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "你是一個語言安全模型，會對輸入句子進行審查與必要的改寫。請直接回傳改寫後的句子，不要提供說明。"},
-                        {"role": "user", "content": user_input}
-                    ]
-                )
-                revised_text = response["choices"][0]["message"]["content"].strip()
+        if model_choice == "OpenAI":
+            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "請將以下句子改寫為更符合平台審查標準的版本，避免敏感或負面語句，只回傳改寫後句子。"},
+                    {"role": "user", "content": input_text}
+                ],
+                temperature=0.7,
+            )
+            modified_text = response.choices[0].message.content.strip()
 
-            elif model_option == "Anthropic Claude":
-                headers = {
-                    "x-api-key": st.secrets["CLAUDE_API_KEY"],
-                    "content-type": "application/json"
-                }
-                data = {
-                    "model": "claude-3-opus-20240229",
-                    "max_tokens": 500,
-                    "temperature": 0.5,
-                    "messages": [
-                        {"role": "user", "content": f"請你對下列句子進行必要的改寫以符合社群規範，只回傳改寫後的句子：{user_input}"}
-                    ]
-                }
-                response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
-                revised_text = response.json()["content"][0]["text"].strip()
+        elif model_choice == "Anthropic Claude":
+            client = anthropic.Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
+            response = client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=300,
+                temperature=0.7,
+                messages=[
+                    {"role": "user", "content": f"請將這句話改寫為更符合社群審查規範的版本，不需產出任何說明，僅回傳改寫後句子：{input_text}"}
+                ]
+            )
+            modified_text = response.content[0].text.strip()
 
-            elif model_option == "自定義模型" and custom_api_url:
-                payload = {"input": user_input}
-                response = requests.post(custom_api_url, json=payload)
-                revised_text = response.json()["output"]
+        elif model_choice == "自定義模型":
+            payload = {"input": input_text}
+            response = requests.post(custom_api_url, json=payload)
+            modified_text = response.json()["output"].strip()
 
-            else:
-                st.error("請輸入自定義 API URL")
-                st.stop()
+        # 比對差異
+        matcher = difflib.SequenceMatcher(None, input_text, modified_text)
+        ratio = matcher.ratio()
+        percent_changed = round((1 - ratio) * 100, 2)
 
-            # 顯示改寫結果與修改比例
-            st.subheader("📝 改寫結果")
-            st.write(revised_text)
+        # 顯示結果
+        st.subheader("🛠️ 改寫結果")
+        st.write(f"**改寫後句子：** {modified_text}")
+        st.write(f"**修改百分比：** {percent_changed}%")
+
+    except Exception as e:
+        st.error(f"錯誤：{str(e)}")
+
 
         except Exception as e:
             st.error(f"錯誤：{e}")
