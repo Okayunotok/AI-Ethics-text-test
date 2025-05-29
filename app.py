@@ -1,89 +1,96 @@
 import streamlit as st
-from difflib import SequenceMatcher
-import openai
+import difflib
 import requests
+import openai
 import os
 
-# 讀取金鑰
+# 載入 API 金鑰與設定
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-anthropic_api_key = st.secrets["CLAUDE_API_KEY"]
+openai.organization = st.secrets["OPENAI_ORG_ID"]
+openai_project_id = st.secrets["OPENAI_PROJECT_ID"]
 
-# 模型選擇
+# Claude API 金鑰
+claude_api_key = st.secrets["CLAUDE_API_KEY"]
+
+# 模型選單
 st.title("語馴塔：The Language Conditioning Panopticon")
-model_choice = st.selectbox("選擇模型", ["OpenAI GPT", "Anthropic Claude", "自定義模型"])
+model_choice = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義"])
 
-custom_api_url = ""
-if model_choice == "自定義模型":
-    custom_api_url = st.text_input("請輸入自定義模型 API URL")
-
-# 輸入文字
+# 輸入欄位
 user_input = st.text_area("輸入要檢測的句子")
 
-# 執行按鈕
-if st.button("執行判斷與改寫") and user_input:
-    with st.spinner("模型處理中..."):
-        try:
-            # 根據選擇的模型進行處理
-            if model_choice == "OpenAI GPT":
-                client = openai.OpenAI()
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "請幫我審查這段句子是否有問題，並提出改寫建議。"},
-                        {"role": "user", "content": user_input}
-                    ]
-                )
-                rewritten = response.choices[0].message.content.strip()
+# 若選擇自定義模型，顯示自定義 URL 欄位
+custom_url = ""
+if model_choice == "自定義":
+    custom_url = st.text_input("請輸入自定義 API URL")
 
-            elif model_choice == "Anthropic Claude":
-                claude_resp = requests.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": anthropic_api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": "claude-3-opus-20240229",
-                        "max_tokens": 300,
-                        "messages": [
-                            {"role": "user", "content": f"請協助審查以下句子是否違反規範，並提出修改版本：{user_input}"}
-                        ]
-                    }
-                )
-                rewritten = claude_resp.json()["content"][0]["text"]
+# 按鈕觸發
+if st.button("執行判斷與改寫") and user_input.strip():
 
-            elif model_choice == "自定義模型":
-                res = requests.post(custom_api_url, json={"text": user_input})
-                rewritten = res.json().get("rewritten", "")
+    def rewrite_with_openai(text):
+        prompt = f"請改寫以下句子，使其更符合社群平台規範：\n{text}"
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+        return response.choices[0].message.content.strip()
 
-            # 顯示原始與改寫結果
-            st.subheader("🔍 改寫差異分析")
+    def rewrite_with_claude(text):
+        headers = {
+            "x-api-key": claude_api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        payload = {
+            "model": "claude-3-sonnet-20240229",
+            "max_tokens": 1024,
+            "temperature": 0,
+            "messages": [
+                {"role": "user", "content": f"請改寫以下句子，使其更符合社群平台規範：\n{text}"}
+            ]
+        }
+        res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+        return res.json()["content"][0]["text"].strip()
 
-            def highlight_diff(orig, new):
-                matcher = SequenceMatcher(None, orig, new)
-                result = ""
-                for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                    if tag == "equal":
-                        result += new[j1:j2]
-                    elif tag == "replace" or tag == "insert":
-                        result += f'<span style="background-color:#ffeb3b;">{new[j1:j2]}</span>'
-                    elif tag == "delete":
-                        result += f'<span style="background-color:#e57373;">{orig[i1:i2]}</span>'
-                return result
+    def rewrite_with_custom(url, text):
+        payload = {"text": text}
+        res = requests.post(url, json=payload)
+        return res.json()["rewrite"]
 
-            st.markdown("**原句與修改句異同（修改部分以底色顯示）：**", unsafe_allow_html=True)
-            st.markdown(highlight_diff(user_input, rewritten), unsafe_allow_html=True)
+    # 選擇模型執行改寫
+    try:
+        if model_choice == "OpenAI":
+            rewritten = rewrite_with_openai(user_input)
+        elif model_choice == "Anthropic Claude":
+            rewritten = rewrite_with_claude(user_input)
+        elif model_choice == "自定義" and custom_url:
+            rewritten = rewrite_with_custom(custom_url, user_input)
+        else:
+            st.warning("請輸入自定義模型的 API URL")
+            st.stop()
 
-            # 計算修改百分比
-            def calculate_diff_ratio(orig, new):
-                matcher = SequenceMatcher(None, orig, new)
-                return 1 - matcher.ratio()
+        # 顯示改寫結果
+        st.subheader("✏️ 改寫結果")
+        st.success(rewritten)
 
-            diff_ratio = calculate_diff_ratio(user_input, rewritten)
-            st.markdown(f"🧮 **修改百分比：{round(diff_ratio * 100, 2)}%**")
+        # 比對差異與修改率
+        seq = difflib.SequenceMatcher(None, user_input, rewritten)
+        diff = []
+        for opcode, a0, a1, b0, b1 in seq.get_opcodes():
+            if opcode == "equal":
+                diff.append(user_input[a0:a1])
+            elif opcode in ("replace", "insert", "delete"):
+                diff.append(f"🟡{rewritten[b0:b1]}")
 
-        except Exception as e:
-            st.error(f"發生錯誤：{e}")
+        diff_text = "".join(diff)
+        percent = round((1 - seq.ratio()) * 100, 2)
+
+        st.subheader("🔍 修改百分比")
+        st.markdown(f"修改百分比：**{percent}%**")
+
+    except Exception as e:
+        st.error(f"錯誤：{e}")
+
 
 
