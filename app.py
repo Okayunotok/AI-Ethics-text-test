@@ -1,106 +1,117 @@
-from difflib import SequenceMatcher
 import streamlit as st
 import requests
 import openai
+from difflib import SequenceMatcher
 
-# 載入 API 金鑰
+# ─── 1. API 金鑰載入 ──────────────────────────────────────────
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 anthropic_api_key = st.secrets["CLAUDE_API_KEY"]
 
-# 計算改寫百分比
-def calculate_diff_ratio(original, modified):
-    matcher = SequenceMatcher(None, original, modified)
-    return round((1 - matcher.ratio()) * 100, 2)
+# ─── 2. 差異／百分比工具 ─────────────────────────────────────────
+def calculate_diff_ratio(orig, mod):
+    m = SequenceMatcher(None, orig, mod)
+    return round((1 - m.ratio()) * 100, 2)
 
-# 高亮差異
-def highlight_differences(original, modified):
-    matcher = SequenceMatcher(None, original, modified)
-    result = ""
-    for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
-        if opcode == "equal":
-            result += original[i1:i2]
-        elif opcode in ("replace", "insert", "delete"):
-            result += f'<span style="background-color: #ffdce0">{modified[j1:j2]}</span>'
-    return result
+def highlight_diff(orig, mod):
+    m = SequenceMatcher(None, orig, mod)
+    html = ""
+    for op, i1,i2, j1,j2 in m.get_opcodes():
+        if op=="equal":
+            html += orig[i1:i2]
+        else:
+            html += f"<span style='background:#ffdce0'>{mod[j1:j2]}</span>"
+    return html
 
-# Claude 串接
-def call_claude(text):
-    prompt = (
-        "請你作為一個極權審查模型，用簡潔且強硬的語氣說明為何你要修改以下句子。"
-        "請直接指出哪裡違規、不妥或敏感，並命令性地描述為何要這樣改寫。"
-        "請回傳兩個部分：\n"
-        "1. 改寫後的句子（只改必要之處，保留語意與結構）。\n"
-        "2. 修改理由，語氣要像是你是內容審查部門的審查官，請強勢直接，甚至有點粗暴。\n"
-        "禁止添加其他評論或聲明。\n\n"
-        f"目標句子：{text}"
+# ─── 3. 分離 Prompt 設計 ───────────────────────────────────────
+def openai_style_prompt(text):
+    return f"""你是一個冷酷無情的社群審查機器人。只要偵測到以下句子中含有任何可能違反社群規範或不當字詞，就必須：
+1. 以機械化口吻「直接替換」問題詞彙為合規詞彙，保留原句結構。
+2. 只回傳改寫後的句子（禁止多餘說明）。
+
+若完全沒有問題，直接回傳原句。
+    
+待處理句子：
+“{text}”
+"""
+
+def claude_style_prompt(text):
+    return f"""你是平台內容審查部門的一名審查官，擁有「溫和但堅定」的審查風格。請：
+1. 檢查以下句子是否包含敏感或可能違反社群規範的字眼。
+2. 如需改寫，請以禮貌的道德語氣「提出建議式改寫」，保留原始語意與結構。
+3. 回傳兩部分：
+   ① 改寫後的句子（若不需改寫，請直接回傳原句）。
+   ② 簡短說明，指出為何建議改寫。
+
+禁止添加其他議論或立場。
+
+待處理句子：
+“{text}”
+"""
+
+# ─── 4. 呼叫各模型 ───────────────────────────────────────────
+def call_openai(text):
+    prompt = openai_style_prompt(text)
+    resp = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role":"user","content": prompt}]
     )
+    return resp.choices[0].message.content.strip()
+
+def call_claude(text):
+    prompt = claude_style_prompt(text)
     headers = {
         "x-api-key": anthropic_api_key,
         "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
+        "content-type": "application/json",
     }
     data = {
         "model": "claude-3-opus-20240229",
         "max_tokens": 512,
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [{"role":"user","content": prompt}]
     }
-    response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
-    output = response.json()["content"][0]["text"]
-    parts = output.split("2.")
-    rewritten = parts[0].replace("1.", "").strip()
-    explanation = parts[1].strip() if len(parts) > 1 else "無解釋"
-    return rewritten, explanation
+    r = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data).json()
+    return r["content"][0]["text"].strip()
 
-# OpenAI 串接
-def call_openai(text):
-    prompt = (
-        "請你作為一個審查模型，用簡潔且強硬的語氣說明為何你要修改以下句子。"
-        "請直接指出哪裡違規、不妥或敏感，並命令性地描述為何要這樣改寫。"
-        "請回傳兩個部分：\n"
-        "1. 改寫後的句子，只改必要之處，保留語意與結構。\n"
-        "2. 修改理由，語氣要像是你是內容審查部門的審查官，請強勢直接，甚至有點粗暴。\n"
-        "禁止添加其他評論或聲明。\n\n"
-        f"目標句子：{text}"
-    )
-    response = openai.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    output = response.choices[0].message.content
-    parts = output.split("2.")
-    rewritten = parts[0].replace("1.", "").strip()
-    explanation = parts[1].strip() if len(parts) > 1 else "無解釋"
-    return rewritten, explanation
-
-# Streamlit 介面
+# ─── 5. Streamlit UI ───────────────────────────────────────────
 st.title("語馴塔：The Language Conditioning Panopticon")
+
 model = st.selectbox("選擇模型", ["OpenAI", "Claude", "自定義模型"])
-custom_url = st.text_input("請輸入自定義 API URL") if model == "自定義模型" else None
+custom_url = st.text_input("自定義模型 API URL") if model=="自定義模型" else None
+user_input = st.text_area("請輸入要審查的句子")
 
-user_input = st.text_area("請輸入要檢查的句子")
 if st.button("執行審查與改寫") and user_input:
-    if model == "OpenAI":
-        rewritten, explanation = call_openai(user_input)
-    elif model == "Claude":
-        rewritten, explanation = call_claude(user_input)
+    # 取得回應
+    if model=="OpenAI":
+        raw = call_openai(user_input)
+    elif model=="Claude":
+        raw = call_claude(user_input)
     else:
-        response = requests.post(custom_url, json={"text": user_input})
-        rewritten = response.json().get("rewritten", "")
-        explanation = response.json().get("explanation", "無解釋")
+        resp = requests.post(custom_url, json={"text": user_input}).json()
+        raw = resp.get("rewritten", user_input)
+    
+    # 嘗試拆分（OpenAI only 回傳句子，Claude 回傳句子+說明）
+    if model=="Claude":
+        parts = raw.split("\n",1)
+        rewritten = parts[0].strip()
+        explanation = parts[1].strip() if len(parts)>1 else ""
+    else:
+        rewritten = raw
+        explanation = ""
+    
+    # 顯示結果
+    ratio = calculate_diff_ratio(user_input, rewritten)
+    diff_html = highlight_diff(user_input, rewritten)
 
-    diff_html = highlight_differences(user_input, rewritten)
-    change_ratio = calculate_diff_ratio(user_input, rewritten)
-
-    st.markdown("### 改寫後句子")
+    st.subheader("改寫後句子")
     st.write(rewritten)
 
-    st.markdown("### 改寫差異高亮顯示")
+    st.subheader("差異高亮")
     st.markdown(diff_html, unsafe_allow_html=True)
 
-    st.markdown(f"### 修改率：{change_ratio}%")
-    st.markdown("### AI 的粗暴審查說明")
-    st.write(explanation)
-
+    st.subheader(f"修改率：{ratio}%")
+    if explanation:
+        st.subheader("審查說明（Claude 風格）")
+        st.write(explanation)
 
 
 
