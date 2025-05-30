@@ -40,14 +40,21 @@ def call_claude_api(text):
     return response.json().get("completion", "")
 
 # OpenAI 呼叫
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=st.secrets["OPENAI_API_KEY"],
+    organization=st.secrets.get("OPENAI_ORG_ID", None)
+)
+
 def call_openai_api(text):
     prompt = prompts["OpenAI"] + "\n" + text
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}]
     )
-    return response["choices"][0]["message"]["content"].strip()
+    return response.choices[0].message.content.strip()
+
 
 # 差異高亮函式
 def generate_diff_html(original, modified):
