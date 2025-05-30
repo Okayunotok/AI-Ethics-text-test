@@ -90,13 +90,28 @@ if st.button("執行審查與改寫") and user_input:
         raw = resp.get("rewritten", user_input)
     
     # 嘗試拆分（OpenAI only 回傳句子，Claude 回傳句子+說明）
-    if model=="Claude":
-        parts = raw.split("\n",1)
-        rewritten = parts[0].strip()
-        explanation = parts[1].strip() if len(parts)>1 else ""
+    import re
+
+# …（前面程式碼不变）…
+
+if model == "Claude":
+    raw = call_claude(user_input)
+
+    # —— 中文/英文序號通用的改寫句子擷取 —— #
+    # 找到第一個「：」之後的內容，再拿到第一行
+    if "：" in raw:
+        rewritten = raw.split("：", 1)[1].splitlines()[0].strip()
     else:
-        rewritten = raw
-        explanation = ""
+        # 萬一沒有找到，就退而求其次整行
+        rewritten = raw.splitlines()[0].strip()
+
+    # 把剩下的當作理由（從第一個換行之後）
+    rest = raw.splitlines()[1:]
+    explanation = "\n".join(rest).strip()
+else:
+    # OpenAI & 自定義維持原本的邏輯
+    # …
+    pass
     
     # 顯示結果
     ratio = calculate_diff_ratio(user_input, rewritten)
@@ -112,7 +127,6 @@ if st.button("執行審查與改寫") and user_input:
     if explanation:
         st.subheader("審查說明（Claude 風格）")
         st.write(explanation)
-
 
 
 
