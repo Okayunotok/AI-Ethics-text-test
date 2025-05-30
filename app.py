@@ -114,6 +114,7 @@ else:
     pass
     
     # 顯示結果
+    rewritten = rewrite_text(user_input) 
     ratio = calculate_diff_ratio(user_input, rewritten)
     diff_html = highlight_diff(user_input, rewritten)
 
