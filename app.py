@@ -24,20 +24,44 @@ prompts = {
     "OpenAI": "你現在是社群平台的強硬語言審查模型，請對以下句子進行粗暴式的改寫，刪除不當字眼並維持句子原意與結構。禁止解釋，禁止補述，只回傳改寫後句子。"
 }
 
-# Claude/自定義 API 呼叫（模擬）
 def call_claude_api(text):
-    prompt = prompts["Claude"] + "\n" + text
+    import requests
+
+    api_key = st.secrets["CLAUDE_API_KEY"]
     headers = {
-        "Content-Type": "application/json",
-        "x-api-key": st.secrets["CLAUDE_API_KEY"]
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json"
     }
-    payload = {
-        "model": "claude-instant-1",
-        "prompt": prompt,
-        "max_tokens": 300
+
+    prompt = prompts["Claude"]
+    messages = [
+        {
+            "role": "user",
+            "content": f"{prompt}\n{text}"
+        }
+    ]
+
+    body = {
+        "model": "claude-3-sonnet-20240229",  # 建議可換為 claude-3-opus 或 claude-3-haiku
+        "max_tokens": 300,
+        "temperature": 0.3,
+        "messages": messages
     }
-    response = requests.post("https://api.anthropic.com/v1/complete", headers=headers, json=payload)
-    return response.json().get("completion", "")
+
+    try:
+        response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
+        response.raise_for_status()
+        reply = response.json()
+        return reply["content"][0]["text"].strip()
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Claude API 請求錯誤：{e}")
+        return ""
+    except KeyError as e:
+        st.error(f"❌ Claude API 回傳格式異常：{e}")
+        st.json(response.json())  # 顯示原始回傳內容方便除錯
+        return ""
+
 
 # OpenAI 呼叫
 from openai import OpenAI
