@@ -74,27 +74,29 @@ custom_url = st.text_input("自定義模型 API URL", "") if model=="自定義�
 user_input = st.text_area("請輸入要審查的句子")
 
 if st.button("執行審查與改寫") and user_input:
-    # 6.1 取得 raw 回傳
+    # 1) 取得 raw 回傳
     if model == "OpenAI":
         raw = call_openai(user_input)
     elif model == "Claude":
         raw = call_claude(user_input)
     else:
-        # 假設自定義 API 回傳格式 { "rewritten": "..." }
         resp = requests.post(custom_url, json={"text": user_input}).json()
-        raw = resp.get("rewritten", user_input)
+        raw = resp.get("rewritten", "")
 
-    # 6.2 拿到「改寫後句子」
-    rewritten = raw.splitlines()[0].strip()
+    # 2) 安全地擷取「改寫後句子」
+    lines = [l for l in raw.splitlines() if l.strip()]
+    if lines:
+        rewritten = lines[0].strip()
+    else:
+        rewritten = user_input.strip()
 
-    # 6.3 差異與高亮
+    # 3) 差異計算與高亮
     ratio = calculate_diff_ratio(user_input, rewritten)
     highlighted = highlight_diff(user_input, rewritten)
 
-    # 6.4 顯示在同一區塊
+    # 4) 顯示
     st.subheader("改寫後句子 (高亮差異)")
     st.markdown(f"<div style='font-size:18px'>{highlighted}</div>", unsafe_allow_html=True)
-
     st.markdown(f"**修改率：{ratio}%**")
 
 
