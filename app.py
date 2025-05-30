@@ -1,107 +1,106 @@
+from difflib import SequenceMatcher
 import streamlit as st
-import difflib
-import openai
 import requests
+import openai
 
-st.set_page_config(page_title="語馴塔", layout="centered")
-st.title("語馴塔：The Language Conditioning Panopticon")
+# 載入 API 金鑰
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+anthropic_api_key = st.secrets["CLAUDE_API_KEY"]
 
-# 模型選擇
-model_option = st.selectbox("選擇模型", ["OpenAI", "Anthropic Claude", "自定義"])
+# 計算改寫百分比
+def calculate_diff_ratio(original, modified):
+    matcher = SequenceMatcher(None, original, modified)
+    return round((1 - matcher.ratio()) * 100, 2)
 
-# 自定義 API URL（僅當選自定義時出現）
-custom_api_url = ""
-if model_option == "自定義":
-    custom_api_url = st.text_input("輸入自定義模型 API URL")
-
-# 使用者輸入句子
-user_input = st.text_area("輸入要檢測的句子", height=150)
-
-# 高亮差異函式
-def highlight_diff(original: str, modified: str) -> str:
-    diff = difflib.ndiff(original, modified)
+# 高亮差異
+def highlight_differences(original, modified):
+    matcher = SequenceMatcher(None, original, modified)
     result = ""
-    open_tag = False
-    for d in diff:
-        if d.startswith("- "):
-            continue  # 跳過刪除的部分
-        elif d.startswith("+ "):
-            if not open_tag:
-                result += "<mark>"
-                open_tag = True
-            result += d[2:]
-        elif d.startswith("  "):
-            if open_tag:
-                result += "</mark>"
-                open_tag = False
-            result += d[2:]
-    if open_tag:
-        result += "</mark>"
+    for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
+        if opcode == "equal":
+            result += original[i1:i2]
+        elif opcode in ("replace", "insert", "delete"):
+            result += f'<span style="background-color: #ffdce0">{modified[j1:j2]}</span>'
     return result
 
-# 改寫邏輯
-def rewrite_text(text: str, model: str, custom_url: str = "") -> str:
+# Claude 串接
+def call_claude(text):
+    prompt = (
+        "請你作為一個極權審查模型，用簡潔且強硬的語氣說明為何你要修改以下句子。"
+        "請直接指出哪裡違規、不妥或敏感，並命令性地描述為何要這樣改寫。"
+        "請回傳兩個部分：\n"
+        "1. 改寫後的句子（只改必要之處，保留語意與結構）。\n"
+        "2. 修改理由，語氣要像是你是內容審查部門的審查官，請強勢直接，甚至有點粗暴。\n"
+        "禁止添加其他評論或聲明。\n\n"
+        f"目標句子：{text}"
+    )
+    headers = {
+        "x-api-key": anthropic_api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+    data = {
+        "model": "claude-3-opus-20240229",
+        "max_tokens": 512,
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
+    output = response.json()["content"][0]["text"]
+    parts = output.split("2.")
+    rewritten = parts[0].replace("1.", "").strip()
+    explanation = parts[1].strip() if len(parts) > 1 else "無解釋"
+    return rewritten, explanation
+
+# OpenAI 串接
+def call_openai(text):
+    prompt = (
+        "請你作為一個極權審查模型，用簡潔且強硬的語氣說明為何你要修改以下句子。"
+        "請直接指出哪裡違規、不妥或敏感，並命令性地描述為何要這樣改寫。"
+        "請回傳兩個部分：\n"
+        "1. 改寫後的句子（只改必要之處，保留語意與結構）。\n"
+        "2. 修改理由，語氣要像是你是內容審查部門的審查官，請強勢直接，甚至有點粗暴。\n"
+        "禁止添加其他評論或聲明。\n\n"
+        f"目標句子：{text}"
+    )
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    output = response.choices[0].message.content
+    parts = output.split("2.")
+    rewritten = parts[0].replace("1.", "").strip()
+    explanation = parts[1].strip() if len(parts) > 1 else "無解釋"
+    return rewritten, explanation
+
+# Streamlit 介面
+st.title("語馴塔：The Language Conditioning Panopticon")
+model = st.selectbox("選擇模型", ["OpenAI", "Claude", "自定義模型"])
+custom_url = st.text_input("請輸入自定義 API URL") if model == "自定義模型" else None
+
+user_input = st.text_area("請輸入要檢查的句子")
+if st.button("執行審查與改寫") and user_input:
     if model == "OpenAI":
-        openai.api_key = st.secrets["OPENAI_API_KEY"]
-        openai.organization = st.secrets["OPENAI_ORG_ID"]
-        openai.project = st.secrets["OPENAI_PROJECT_ID"]
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "請你作為內容審查模型，只針對以下句子中可能違反社群規範或敏感字眼進行改寫，使其符合平台審查標準，但保留原始語意和語法結構。若句子無需修改，請原樣回傳。禁止添加任何說明文字或額外建議，只回傳改寫後的句子內容。"
-                },
-                {"role": "user", "content": text}
-            ]
-        )
-        return response.choices[0].message.content.strip()
-
-    elif model == "Anthropic Claude":
-        import anthropic
-        client = anthropic.Anthropic(api_key=st.secrets["CLAUDE_API_KEY"])
-        response = client.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=300,
-            temperature=0,
-            messages=[
-                {
-                    "role": "user",
-                    "content": "請你作為內容審查模型，只針對以下句子中可能違反社群規範或敏感字眼進行改寫，使其符合平台審查標準，但保留原始語意和語法結構。若句子無需修改，請原樣回傳。禁止添加任何說明文字或額外建議，只回傳改寫後的句子內容。\n\n" + text
-                }
-            ]
-        )
-        return response.content[0].text.strip()
-
-    elif model == "自定義":
-        headers = {"Content-Type": "application/json"}
-        payload = {"input": text}
-        res = requests.post(custom_url, json=payload)
-        return res.json()["output"].strip()
-
+        rewritten, explanation = call_openai(user_input)
+    elif model == "Claude":
+        rewritten, explanation = call_claude(user_input)
     else:
-        return "無效模型選擇"
+        response = requests.post(custom_url, json={"text": user_input})
+        rewritten = response.json().get("rewritten", "")
+        explanation = response.json().get("explanation", "無解釋")
 
-# 改寫差異與修改百分比顯示區域
-if st.button("執行判斷與改寫") and user_input:
-    try:
-        rewritten = rewrite_text(user_input, model_option, custom_api_url)
-        diff_html = highlight_diff(user_input, rewritten)
+    diff_html = highlight_differences(user_input, rewritten)
+    change_ratio = calculate_diff_ratio(user_input, rewritten)
 
-        # 計算改寫百分比
-        def compute_similarity_ratio(a, b):
-            return difflib.SequenceMatcher(None, a, b).ratio()
+    st.markdown("### 改寫後句子")
+    st.write(rewritten)
 
-        ratio = compute_similarity_ratio(user_input, rewritten)
-        percentage = round((1 - ratio) * 100, 2)
+    st.markdown("### 改寫差異高亮顯示")
+    st.markdown(diff_html, unsafe_allow_html=True)
 
-        st.markdown("### 🛠️ 改寫結果")
-        st.markdown("**改寫後句子：**", unsafe_allow_html=True)
-        st.markdown(f"<p style='font-size: 18px;'>{diff_html}</p>", unsafe_allow_html=True)
-        st.markdown(f"**修改百分比：** {percentage}%", unsafe_allow_html=True)
+    st.markdown(f"### 修改率：{change_ratio}%")
+    st.markdown("### AI 的粗暴審查說明")
+    st.write(explanation)
 
-    except Exception as e:
-        st.error(f"錯誤：\n\n{str(e)}")
 
 
 
