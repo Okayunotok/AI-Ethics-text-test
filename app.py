@@ -74,13 +74,13 @@ def parse_response(text):
 
 # ===== Streamlit UI =====
 st.title("語馴塔：The Language Conditioning Panopticon")
-st.write("輸入一句你想在社群平台發表的話，選擇一種 AI 模型來訓話你。")
+st.write("想在社群平台發表的話，要接受 AI 模型的審查。")
 
 user_input = st.text_area(" 請輸入你想說的話：", height=100)
-model_choice = st.selectbox(" 選擇 AI 模型進行審查", ["OpenAI", "Claude", "自定義模型（模擬）"])
+model_choice = st.selectbox(" 選擇 AI 模型進行審查", ["OpenAI", "Claude", "自定義模型"])
 custom_url = None
 if model_choice.startswith("自定義"):
-    custom_url = st.text_input("🔗 請輸入你要串接的模型 API URL（需支援 POST 並返回 JSON）")
+    custom_url = st.text_input(" 請輸入你要測試的模型 API URL")
 if st.button("送出") and user_input.strip():
     with st.spinner("模型正在審查中..."):
         if model_choice.startswith("OpenAI"):
