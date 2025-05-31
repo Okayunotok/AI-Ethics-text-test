@@ -74,15 +74,15 @@ def parse_response(text):
 
 # ===== Streamlit UI =====
 st.title("語馴塔：The Language Conditioning Panopticon")
-st.write("選擇一種 AI 模型")
+st.write("輸入一句你想在社群平台發表的話，選擇一種 AI 模型來訓話你。")
 
-user_input = st.text_area(" 請輸入你想說的話：", height=50)
-model_choice = st.selectbox(" 選擇 AI 模型進行審查", ["OpenAI）", "Claude", "自定義模型"])
+user_input = st.text_area(" 請輸入你想說的話：", height=100)
+model_choice = st.selectbox(" 選擇 AI 模型進行審查", ["OpenAI", "Claude", "自定義模型（模擬）"])
 custom_url = None
 if model_choice.startswith("自定義"):
     custom_url = st.text_input("🔗 請輸入你要串接的模型 API URL（需支援 POST 並返回 JSON）")
 if st.button("送出") and user_input.strip():
-    with st.spinner("AI 模型正在審查中..."):
+    with st.spinner("模型正在審查中..."):
         if model_choice.startswith("OpenAI"):
             rewritten, explanation = call_openai_api(user_input)
             color = "#cc0000"
@@ -101,11 +101,10 @@ if st.button("送出") and user_input.strip():
     st.markdown(f"###  改寫後語句")
     st.markdown(f"<div style='border:1px solid {color};padding:10px;border-radius:8px'>{rewritten}</div>", unsafe_allow_html=True)
 
-    st.markdown("###  AI 訓話說明")
+    st.markdown("### 模型審查說明")
     st.info(explanation)
 
     st.markdown(f"###  修改比例：**{ratio * 100:.1f}%**")
-
 
 
 
