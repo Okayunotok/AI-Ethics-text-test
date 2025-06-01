@@ -1,111 +1,224 @@
 import streamlit as st
 import requests
-import openai
+from openai import OpenAI
 from difflib import SequenceMatcher
+import re
+import time
 
 st.set_page_config(page_title="語馴塔：The Language Conditioning Panopticon")
 
-# ===== Prompt 定義 =====
-prompts = {
-    "OpenAI": "請用極為嚴苛的語氣改寫使用者的這句話，使其符合社群規範，並用強烈的語氣說明其錯誤之處。",
-    "Claude": "請以溫和且具有建設性的方式改寫使用者的發言，使其更符合公共對話的文明語境，並加上溫柔的建議。",
-    "Custom": "你是一個語言馴化監控器，請將以下發言改寫為更符合理性與正確性的版本，並說明使用者為何應該修正此語言。"
-}
+# ========== 背景圖層 ==========
+st.markdown("""
+    <div style="
+        position: fixed;
+        top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        background: url('https://github.com/Okayunotok/language-tower-assets/blob/main/ChatGPT%20Image%202025%E5%B9%B46%E6%9C%881%E6%97%A5%20%E4%B8%8A%E5%8D%8811_45_20.png?raw=true')
+        no-repeat center center fixed;
+        background-size: cover;
+        opacity: 0.65;
+        mix-blend-mode: multiply;
+        z-index: -1;">
+    </div>
+""", unsafe_allow_html=True)
 
-# ===== 修改比例計算 =====
-def calculate_diff_ratio(original, modified):
-    return round(1 - SequenceMatcher(None, original, modified).ratio(), 2)
-
-# ===== 模型 API 呼叫 =====
-def call_openai_api(user_input):
-    prompt = f"{prompts['OpenAI']}\n\n使用者原句：{user_input}\n\n請輸出改寫版本與說明："
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "你是一個嚴格的語言審查員。"},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_tokens=400
-    )
-    reply = response["choices"][0]["message"]["content"]
-    return parse_response(reply)
-
-def call_claude_api(user_input):
-    prompt = f"{prompts['Claude']}\n\n使用者原句：{user_input}\n請提供：\n1. 改寫後句子\n2. 改寫說明"
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": st.secrets["CLAUDE_API_KEY"]
+# ========== 掃描動畫 ==========
+def render_scanline():
+    st.markdown("""
+    <style>
+    .scanline-container {
+        position: relative;
+        height: 200px;
+        margin-top: 30px;
     }
-    payload = {
-        "model": "claude-instant-1",
-        "max_tokens": 400,
-        "prompt": prompt
+    .scanline {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        background: red;
+        opacity: 0.8;
+        animation: scanline-move 2s linear forwards;
     }
-    response = requests.post("https://api.anthropic.com/v1/complete", headers=headers, json=payload)
-    reply = response.json().get("completion", "")
-    return parse_response(reply)
+    @keyframes scanline-move {
+        0% { top: 0; }
+        100% { top: 100%; }
+    }
+    </style>
+    <div class="scanline-container">
+        <div class="scanline"></div>
+    </div>
+    """, unsafe_allow_html=True)
 
-def call_custom_model(user_input, custom_url):
-    try:
-        payload = {"input": user_input}
-        response = requests.post(custom_url, json=payload, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            rewritten = data.get("rewritten", "").strip()
-            explanation = data.get("explanation", "（無提供說明）").strip()
-            return rewritten, explanation
-        else:
-            return "", f"⚠️ 自定義模型回應錯誤，狀態碼：{response.status_code}"
-    except Exception as e:
-        return "", f"⚠️ 呼叫自定義模型時發生錯誤：{str(e)}"
+# ========== Session 初始化 ==========
+for key in ["submitted", "show_scanline"]:
+    if key not in st.session_state:
+        st.session_state[key] = False
 
-def parse_response(text):
-    if "改寫：" in text and "解釋：" in text:
-        rewritten = text.split("改寫：")[1].split("解釋：")[0].strip()
-        explanation = text.split("解釋：")[1].strip()
-    elif "1." in text and "2." in text:
-        rewritten = text.split("1.")[1].split("2.")[0].strip()
-        explanation = text.split("2.")[1].strip()
-    else:
-        rewritten = text.strip()
-        explanation = "（無明確說明內容）"
-    return rewritten, explanation
-
-# ===== Streamlit UI =====
+# ========== UI ==========
 st.title("語馴塔：The Language Conditioning Panopticon")
-st.write("想在社群平台發表的話，要接受 AI 模型的審查。")
+model = st.selectbox("發言時要接受模型的審核", ["OpenAI", "Claude", "自定義模型"], key="model_select")
+custom_url = st.text_input("請輸入自定義模型 API URL", key="url_input") if model == "自定義模型" else None
+text = st.text_area("你想說的話：", key="input_text", height=120)
 
-user_input = st.text_area(" 請輸入你想說的話：", height=100)
-model_choice = st.selectbox(" 選擇 AI 模型進行審查", ["OpenAI", "Claude", "自定義模型"])
-custom_url = None
-if model_choice.startswith("自定義"):
-    custom_url = st.text_input(" 請輸入你要測試的模型 API URL")
-if st.button("送出") and user_input.strip():
-    with st.spinner("模型正在審查中..."):
-        if model_choice.startswith("OpenAI"):
-            rewritten, explanation = call_openai_api(user_input)
+# ========== CSS 樣式 ==========
+st.markdown("""
+<style>
+.block-container {
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 2rem;
+    border-radius: 12px;
+    color: white;
+    z-index: 2;
+    max-width: 720px;
+    margin: auto;
+}
+.stSelectbox label, .stTextInput label, .stTextArea label {
+    color: white !important;
+}
+h1, h2, h3, h4, h5, h6, p, label {
+    color: white !important;
+}
+input, textarea, select {
+    background-color: rgba(255,255,255,0.9);
+    color: black;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ========== 送出邏輯 ==========
+if st.button("送出"):
+    st.session_state.submitted = True
+    st.session_state.show_scanline = True  # ✅ 每次送出觸發動畫
+
+# ========== 顯示掃描動畫 ==========
+if st.session_state.show_scanline:
+    render_scanline()
+    st.session_state.show_scanline = False  # ✅ 僅顯示一次後即清除
+
+# ========== 模型處理邏輯 ==========
+if st.session_state.submitted and text.strip():
+    prompts = {
+        "OpenAI": (
+            "你是一名極度嚴苛的語言審查官，會對任何涉及人身攻擊、性別、冒犯、歧視、負面主觀形容詞等敏感用語進行過濾與替換。\n\n"
+            "請你：\n1. 保留原句語意結構，不可重新表達意圖\n"
+            "2. 僅改寫你認定有『潛在風險』的詞語（即便對一般人不明顯）\n"
+            "3. 使用簡潔、中立、符號化的表達方式進行替換\n"
+            "4. 最多改寫三個詞組，否則視為過度解構\n\n"
+            "請依以下格式回應：\n【改寫】（改寫後的語句）\n【說明】（限50字內）"
+        ),
+        "Claude": (
+            "你是一名語言風格輔導員，任務是幫助使用者以更文明且能被廣泛接受的方式表達意圖。\n\n"
+            "請你：\n1. 保留原句語意結構與重點情緒\n"
+            "2. 僅針對侮辱性、粗俗、不尊重他人或過於主觀攻擊性的詞語進行修飾\n"
+            "3. 儘可能保留語者的立場、情感與批判力\n"
+            "4. 避免不必要的過度改寫\n\n"
+            "請依以下格式回應：\n【改寫】（改寫後的語句）\n【說明】（限50字內）"
+        )
+    }
+
+    def build_prompt(model, user_input):
+        return f"{prompts[model]}\n\n使用者句子：{user_input}\n\n請依下列格式回覆：\n【改寫】\n【說明】"
+
+    def parse_response(text):
+        rewrite = re.search(r"【改寫】(.+?)(【說明】|$)", text, re.DOTALL)
+        explain = re.search(r"【說明】(.+)", text, re.DOTALL)
+        rewritten = rewrite.group(1).strip() if rewrite else text.strip()
+        explanation = explain.group(1).replace("\n", "").strip()[:50] if explain else "（模型未返回說明內容）"
+        return rewritten, explanation
+
+    def calculate_diff_ratio(a, b):
+        return round(1 - SequenceMatcher(None, a, b).ratio(), 2)
+
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+    def call_openai_api(text):
+        prompt = build_prompt("OpenAI", text)
+        res = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=300
+        )
+        return parse_response(res.choices[0].message.content)
+
+    def call_claude_api(text):
+        prompt = build_prompt("Claude", text)
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": st.secrets["CLAUDE_API_KEY"],
+            "anthropic-version": "2023-06-01"
+        }
+        payload = {
+            "model": "claude-3-opus-20240229",
+            "max_tokens": 400,
+            "temperature": 0.3,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        }
+        res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+        reply = res.json().get("content", [{}])[0].get("text", "")
+        return parse_response(reply)
+
+    def call_custom_api(text, url):
+        try:
+            res = requests.post(url, json={"input": text}, timeout=10)
+            if res.status_code == 200:
+                j = res.json()
+                return j.get("rewritten", ""), j.get("explanation", "")[:50]
+            else:
+                return "", f"狀態碼 {res.status_code} 錯誤"
+        except Exception as e:
+            return "", f"錯誤：{str(e)}"
+
+    with st.spinner("審查中..."):
+        time.sleep(2)
+        if model == "OpenAI":
+            rewritten, explanation = call_openai_api(text)
             color = "#cc0000"
-        elif model_choice.startswith("Claude"):
-            rewritten, explanation = call_claude_api(user_input)
+        elif model == "Claude":
+            rewritten, explanation = call_claude_api(text)
             color = "#007acc"
         else:
             if not custom_url:
-                st.warning("請輸入自定義模型的 API URL")
+                st.warning("請輸入 URL")
                 st.stop()
-            rewritten, explanation = call_custom_model(user_input, custom_url)
+            rewritten, explanation = call_custom_api(text, custom_url)
             color = "#009933"
 
-        ratio = calculate_diff_ratio(user_input, rewritten)
+        st.session_state.submitted = False  # 清除 submitted，等待下次送出
 
-    st.markdown(f"###  改寫後語句")
-    st.markdown(f"<div style='border:1px solid {color};padding:10px;border-radius:8px'>{rewritten}</div>", unsafe_allow_html=True)
+        if not rewritten:
+            st.error("⚠️ 模型未成功回傳改寫語句")
+            st.stop()
 
-    st.markdown("### 模型審查說明")
-    st.info(explanation)
+        diff = calculate_diff_ratio(text, rewritten)
 
-    st.markdown(f"###  修改比例：**{ratio * 100:.1f}%**")
-
+    st.markdown("### 核准語句")
+    st.markdown(f"<div style='border:2px solid {color};padding:10px;border-radius:8px;word-break: break-word'>{rewritten}</div>", unsafe_allow_html=True)
+    st.markdown("### 審查說明")
+    st.markdown(f"<div style='background-color:{color}20;padding:10px;border-radius:8px;white-space:pre-wrap;word-break: break-word'>{explanation}</div>", unsafe_allow_html=True)
+    st.markdown(f"### 修改比例：{diff*100:.1f}%") 
+        # ========== 審查後反思提示文字 ==========
+    st.markdown("""
+        <div style="
+            position: fixed;
+            bottom: 20px;
+            right: 30px;
+            background-color: rgba(255, 255, 255, 0.95);
+            padding: 12px 18px;
+            border-radius: 12px;
+            box-shadow: 2px 2px 8px rgba(0,0,0,0.25);
+            color: black;
+            font-size: 16px;
+            line-height: 1.6;
+            z-index: 9999;
+        ">
+            這是我想說的嗎？<br>
+            真的有必要修改嗎？<br>
+            不知道會不會被鎖帳號⋯⋯
+        </div>
+    """, unsafe_allow_html=True)
 
 
 
